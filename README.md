@@ -37,7 +37,7 @@ You can then save your style changes to propagate them to other objects, includi
 
 LocalCSS Editor is simply a large text expression that you need to add to the Watch tab in the Data Viewer. You can copy its latest version from the Releases page here:
 
-* [https://github.com/zueiv/fmLocalCSSEditor/releases/download/latest/expression.txt](https://github.com/zueiv/fmLocalCSSEditor/releases/download/latest/expression.txt)
+* [https://github.com/zueiv/fmLocalCSSEditor/releases/download/latest/LocalCSSEditor.txt](https://github.com/zueiv/fmLocalCSSEditor/releases/download/latest/LocalCSSEditor.txt)
 
 To use this expression, you need to install the free BaseElements plugin:
 
