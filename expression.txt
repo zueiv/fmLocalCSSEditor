@@ -1,0 +1,337 @@
+/**
+* LocalCSS Editor v1.0
+* Expression for FMP Data Viewer by Alex Zueiv
+* Published under the MIT license (see bottom)
+*
+* Install the free BaseElements plugin, add this expression to the Data Viewer,
+* evaluate it, and follow the step-by-step instructions in the Result pane.
+*
+* https://github.com/zueiv/fmLocalCSSEditor
+**/
+
+
+/** SETTINGS (change as needed) **/
+
+Let ( [
+	editorState = 0 ;    // 0 disabled, 1 enabled, -1 paused
+	maxObjects = 5       // maximum number of objects on the clipboard to proceed
+] ;
+
+
+/** EXPRESSION (do not change) **/
+
+Case (
+
+not editorState ;
+	"DISABLED. Change the editorState to 1 so it can monitor the clipboard."
+	& If ( $$az.lce ≠ "" ;
+		// clear global variables
+		While ( [
+			keys = JSONListKeys ( $$az.lce ; "hash.css" ) ;
+			$$az.lce = "" ;
+			$$az.lce.FullCSS = "" ;
+			i = ValueCount ( keys )
+		] ; i ; [
+			$$az.lce.LocalCSS[ GetValue ( keys ; i ) ] = "" ;
+			i = i - 1
+		] ; "" )
+	) ;
+
+editorState < 0 ;
+	"PAUSED. Change the editorState to 1 so it can monitor the clipboard"
+	& If ( $$az.lce = "" ; "." ;
+		" and global variables.¶--------------¶" & JSONGetElement ( $$az.lce ; "log" )
+	) ;
+
+Let ( [ // ENABLED
+
+	steps = List (
+		"Step >0:" ;
+		"--------------" ;
+		"> 1. Copy the layout object to the clipboard and evaluate this expression to load it into global variables." ;
+		"> 2. Edit the $$az.lce.LocalCSS[] variables and evaluate this expression again to place the edited object on the clipboard." ;
+		"> 3. Paste the edited object, then repeat step 2, copy another object, or change the editorState to -1 or 0 if you are done." ;
+	) ;
+
+	layoutObjectsFormat = If ( Get ( SystemPlatform ) = 1 ;
+		"CorePasteboardFlavorType 0x" & HexEncode ( "XML2" ) ; // macos
+		"Mac-XML2" // windows
+	) ;
+
+	error = EvaluationError ( Evaluate ( "let($$az.lce.temp=be_clipboardformats;0)" ) ) ;
+	formatsOnClipboard = If ( not error ; $$az.lce.temp ) ;
+	$$az.lce.temp = "" ;
+	error = If ( error ; "ERROR: The BaseElements plugin is not installed or disabled.¶--------------" ) ;
+	
+	error = SetRecursion ( Case (
+
+		error ≠ "" ; error ;
+
+		$$az.lce ≠ ""
+		and While ( [
+			keys = JSONListKeys ( $$az.lce ; "hash.css" ) ;
+			i = ValueCount ( keys ) ; cssEdited = False
+		] ;
+			i and not cssEdited ;
+		[
+			key = GetValue ( keys ; i ) ;
+			cssEdited = JSONGetElement ( $$az.lce ; "hash.css." & key )
+				≠ GetContainerAttribute ( $$az.lce.LocalCSS[ key ] ; "MD5" ) ;
+			i = i - 1
+		] ;
+			cssEdited
+		) ;
+			// create an FMXMLSnippet of type LayoutObjectList with the edited CSS, place it on the clipboard, and move to step 3
+			Let ( [
+				$$az.lce.temp = While ( [
+					splitXML = JSONGetElement ( $$az.lce ; "xml" ) ;
+					vc = ValueCount ( splitXML ) ;
+					i = 0 ; objectKey = "" ; insertCSS = "" ; prevLine = ""
+				] ;
+					i < vc ;
+				[
+					i = i + 1 ;
+					thisLine = GetValue ( splitXML ; i ) ;
+					objectKey = If ( LeftWords ( thisLine ; 1 ) ≠ "Object" ; objectKey ;
+						LeftWords ( GetValue ( Substitute (
+							Left ( thisLine ; Position ( thisLine ; ">" ; 1 ; 1 ) ) ;
+							[ " key=" ; ¶ ]
+						) ; 2 ) ; 1 )
+					) ;
+					insertCSS = List ( insertCSS ;
+						If ( prevLine ≠ "<LocalCSS>" ; thisLine ;
+							// replace css in all objects to include previous edit
+							Let ( [
+								localCSS = $$az.lce.LocalCSS[ objectKey ] ;
+								$$az.lce = JSONSetElement ( $$az.lce ;
+									[ "hash.css." & objectKey ; GetContainerAttribute ( localCSS ; "MD5" ) ; JSONString ]
+								)
+							] ;
+								Substitute ( localCSS ;
+									[ ¶ & Char(10) ; "&#10;" ] ; [ Char(10) ; "&#10;" ] ;
+									[ ¶ ; "&#10;" ] ; [ Char(9) ; "&#09;" ]
+								)
+							)
+						)
+					) ;
+					prevLine = thisLine
+				] ;
+					insertCSS
+				) ;
+				x = Evaluate ( "be_clipboardsettext($$az.lce.temp;" & Quote ( layoutObjectsFormat ) & ")" ) ;
+				$$az.lce = JSONSetElement ( $$az.lce ;
+					[ "modCount" ; JSONGetElement ( $$az.lce ; "modCount" ) + 1 ; JSONNumber ]
+				) ;
+				$$az.lce.lastStep = 2 ;
+				$$az.lce.edited = 1 ;
+				$$az.lce.temp = ""
+			] ; "" ) ;
+
+		$$az.lce ≠ ""
+		and ValueCount ( formatsOnClipboard ) < 3
+		and PatternCount ( formatsOnClipboard ; layoutObjectsFormat ) ;
+			// the edited layout objects are still on the clipboard, so satay on step 3
+			Let ( $$az.lce.lastStep = 2 ; "" ) ;
+
+		ValueCount ( formatsOnClipboard ) > 2
+		and PatternCount ( formatsOnClipboard ; layoutObjectsFormat ) ;
+			// the clipboard contains unedited layout objects, so try loading them into global variables. next step 1 or 2
+			Let ( [
+				xml = Evaluate ( "be_clipboardgettext(" & Quote ( layoutObjectsFormat ) & ")" ) ;
+				objectCount = PatternCount ( xml ; "<Object " )
+			] ;
+				Case (
+
+					objectCount > maxObjects ; // next step 1 or 2
+						"ERROR: An attempt to load "
+						& objectCount
+						& " objects from the clipboard failed due to a maxObjects limit. "
+						& If ( $$az.lce = "" ;
+							// stay on step 1
+							"Increase the limit or copy another object." ;
+							// stay on step 2 or move up from step 3
+							Let ( $$az.lce.lastStep = If ( JSONGetElement ( $$az.lce ; "modCount" ) ; 3 ; 1 ) ;
+								"Increase the limit, copy another object, or continue from step 2."
+							)
+						) & "¶--------------" ;
+
+					$$az.lce = ""
+					or JSONGetElement ( $$az.lce ; "modCount" )
+					or JSONGetElement ( $$az.lce ; "hash.xml" ) ≠ GetContainerAttribute ( xml ; "MD5" ) ;
+						// load objects into global variables, replacing the current ones. next step 2
+						Let ( [
+							$$az.lce.lastStep = 1 ;
+							x = If ( $$az.lce ≠ "" ;
+								While ( [
+									keys = JSONListKeys ( $$az.lce ; "hash.css" ) ;
+									i = ValueCount ( keys )
+								] ; i ; [
+									$$az.lce.LocalCSS[ GetValue ( keys ; i ) ] = "" ;
+									i = i - 1
+								] ; "" )
+							) ;
+							splitXML = Substitute ( xml ;
+								[ ¶ ; "" ] ; [ Char(10) ; "" ] ;
+								[ "<Object "    ; "¶<Object "     ] ;
+								[ "<Styles>"    ; "<Styles>¶"     ] ;
+								[ "<LocalCSS>"  ; "<LocalCSS>¶"   ] ;
+								[ "</LocalCSS>" ; "¶</LocalCSS>¶" ] ;
+								[ "<FullCSS>"   ; "<FullCSS>¶"    ] ;
+								[ "</FullCSS>"  ; "¶</FullCSS>"   ]
+							) ;
+							splitXML = While ( [
+								vc = ValueCount ( splitXML ) ;
+								i = 0 ; insertNodes = "" ; prevLine = ""
+							] ;
+								i < vc ;
+							[
+								i = i + 1 ;
+								thisLine = GetValue ( splitXML ; i ) ;
+								insertNodes = List (
+									insertNodes ;
+									If ( RightWords ( thisLine ; 1 ) = "FullCSS" and prevLine ≠ "</LocalCSS>" ;
+										"<LocalCSS>¶¶</LocalCSS>"
+									) ;
+									thisLine
+								) ;
+								prevLine = thisLine
+							] ;
+								insertNodes
+							) ;
+							firstType = LeftWords ( GetValue ( Substitute ( GetValue ( splitXML ; 2 ) ; " type=" ; ¶ ) ; 2 ) ; 1 ) ;
+							$$az.lce = JSONSetElement ( "{}" ;
+								[ "xml" ; splitXML ; JSONString ] ;
+								[ "type" ; firstType ; JSONString ] ;
+								[ "hash.xml" ; GetContainerAttribute ( xml ; "MD5" ) ; JSONString ]
+							) ;
+							$$az.lce.FullCSS = "" ;
+							x = While ( [
+								vc = ValueCount ( splitXML ) ;
+								i = 0 ; objectNode = "" ; objectKey = "" ; localCSS = "" ; prevLine = ""
+							] ;
+								i < vc ;
+							[
+								i = i + 1 ;
+								thisLine = GetValue ( splitXML ; i ) ;
+								lineType = LeftWords ( thisLine ; 1 ) ;
+								objectNode = If ( lineType ≠ "Object" ; objectNode ;
+									Left ( thisLine ; Position ( thisLine ; ">" ; 1 ; 1 ) )
+								) ;
+								objectKey = If ( lineType ≠ "Object" ; objectKey ;
+									LeftWords ( GetValue ( Substitute ( objectNode ; " key=" ; ¶ ) ; 2 ) ; 1 )
+								) ;
+								localCSS = If ( prevLine ≠ "<LocalCSS>" ; localCSS ;
+									Substitute ( thisLine ; [ "&#10;" ; ¶ ] ; [ "&#09;" ; Char(9) ] )
+								) ;
+								x = If ( RightWords ( prevLine ; 1 ) = "FullCSS" ; Let ( [
+									fullCSS = Substitute ( thisLine ; [ "&#10;" ; ¶ ] ; [ "&#09;" ; Char(9) ] ) ;
+									fullSelectors = UniqueValues ( FilterValues ( fullCSS ;
+										Substitute ( fullCSS ;
+										[ Char(9) ; "≠" ] ; [ "{" ; "≠" ] ; [ "}" ; "≠" ] )
+									) ) ;
+									localSelectors = UniqueValues ( FilterValues ( localCSS ;
+										Substitute ( localCSS ;
+										[ Char(9) ; "≠" ] ; [ "{" ; "≠" ] ; [ "}" ; "≠" ] )
+									) ) ;
+									addSelectors = MiddleValues (
+										UniqueValues ( localSelectors & fullSelectors ) ;
+										ValueCount ( localSelectors ) + 1 ;
+										999
+									) ;
+									comment = "/" & "** Object"
+										& " type=" & Quote ( LeftWords ( GetValue ( Substitute ( objectNode ; " type=" ; ¶ ) ; 2 ) ; 1 ) )
+										& " key=" & Quote ( objectKey )
+										& " name=" & Quote ( GetValue ( Substitute (
+												GetValue ( Substitute ( objectNode ; " name=\"" ; ¶ ) ; 2 ) ;
+												[ "\"" ; ¶ ]
+											) ; 1 ) )
+										 & " **" & "/¶¶" ;
+									$$az.lce.LocalCSS[ objectKey ] = comment & localCSS & Substitute ( addSelectors ; ¶ ; "¶{¶}¶" ) ;
+									$$az.lce = JSONSetElement ( $$az.lce ;
+										[ "hash.css." & objectKey ; GetContainerAttribute ( $$az.lce.LocalCSS[ objectKey ] ; "MD5" ) ; JSONString ]
+									) ;
+									$$az.lce.FullCSS = List ( $$az.lce.FullCSS ; comment & fullCSS & ¶ )
+								] ; "" ) ) ;
+								prevLine = thisLine
+							] ; "" )
+						] ; "" ) ;
+
+					// the layout objects are already loaded into global variables that haven't been edited yet, so stay on step 2
+					Let ( $$az.lce.lastStep = 1 ; "" )
+				)
+			) ;
+
+		// the clipboard does not contain layout objects, so stay on step 1 or 2 or move up from step 3
+		If ( $$az.lce ≠ "" ;
+			Let ( $$az.lce.lastStep = If ( JSONGetElement ( $$az.lce ; "modCount" ) ; 3 ; 1 ) ; "" )
+		)
+
+	) ; maxObjects * 10 ) ;
+
+
+/** OUTPUT **/
+
+	objectType = If ( $$az.lce ≠ "" ; JSONGetElement ( $$az.lce ; "type" ) ) ;
+	modCount = If ( $$az.lce ≠ "" ; JSONGetElement ( $$az.lce ; "modCount" ) ) ;
+	stepLog = If ( $$az.lce ≠ "" ; JSONGetElement ( $$az.lce ; "log" ) ) ;
+
+	prevStep = GetAsNumber ( LeftWords ( RightValues ( stepLog ; 1 ) ; 2 ) ) ;
+	lastStep = $$az.lce.lastStep ;
+
+	addStep = Case (
+		lastStep = 1 and stepLog = "" ;
+			"• Step 1 completed, the " & objectType & " is loaded into global variables." ;
+		lastStep = 2 and $$az.lce.edited ;
+			"• Step 2 completed, the " & objectType
+			& If ( modCount < 2 ;
+				" with the edited CSS is placed on the clipboard." ;
+				" with the CSS edited " & modCount & " times is placed on the clipboard."
+			) ;
+		lastStep = 3 and prevStep ≠ 3 ;
+			"• Step 3 passed, the edited " & objectType & " is no longer on the clipboard, the editor returned to step 2."
+	) ;
+
+	stepLog = List ( stepLog ; addStep ) ;
+	x = If ( addStep ≠ "" ;
+		Let ( $$az.lce = JSONSetElement ( $$az.lce ; "log" ; stepLog ; JSONString ) ; "" )
+	) ;
+	$$az.lce.lastStep = "" ;
+	$$az.lce.edited = ""
+] ;
+	List (
+		error ;
+		Choose ( If ( lastStep = 3 ; 1 ; lastStep ) ;
+			Substitute ( steps ; [ ">0" ; "1 (COPY)"  ] ; [ "> 2" ; "  2" ] ; [ "> 3" ; "  3" ] ) ;
+			Substitute ( steps ; [ ">0" ; "2 (EDIT)"  ] ; [ "> 1" ; "  1" ] ; [ "> 3" ; "  3" ] ) ;
+			Substitute ( steps ; [ ">0" ; "3 (PASTE)" ] ; [ "> 1" ; "  1" ] ; [ "> 2" ; "  2" ] )
+		) ;
+		If ( stepLog ≠ "" ; "--------------¶" & stepLog )
+	)
+)
+
+) )
+
+
+/**
+* LICENSE
+*
+* Copyright (c) 2024 Alexander Zueiv <a.zueiv@gmail.com>
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the “Software”), to
+* deal in the Software without restriction, including without limitation the
+* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+* sell copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+* 
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+* 
+* THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+**/
